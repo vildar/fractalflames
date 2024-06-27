@@ -1,6 +1,17 @@
+#![allow(dead_code)]
+
 use plotters::prelude::*;
 use rand::Rng;
 use rand::distributions::{Distribution, WeightedIndex};
+
+enum Variation {
+    Linear,
+    Sinusoidal,
+    Spherical,
+    Swirl,
+    Horseshoe,
+    Popcorn,
+}
 
 struct AffineTransform {
     a: f64,
@@ -10,13 +21,34 @@ struct AffineTransform {
     e: f64,
     f: f64,
     weight: f64,
+    variation: Variation,
 }
 
 impl AffineTransform {
     fn apply(&self, x: f64, y: f64) -> (f64, f64) {
-        let new_x = self.a * x + self.b * y + self.c;
-        let new_y = self.d * x + self.e * y + self.f;
-        (new_x, new_y)
+        let (new_x, new_y) = (
+            self.a * x + self.b * y + self.c,
+            self.d * x + self.e * y + self.f,
+        );
+        let r = (new_x * new_x + new_y * new_y).sqrt();
+
+        match self.variation {
+            Variation::Linear => (new_x, new_y),
+            Variation::Sinusoidal => (new_x.sin(), new_y.sin()),
+            Variation::Spherical => (new_x / (r * r), new_y / (r * r)),
+            Variation::Swirl => (
+                new_x * r.sin() - new_y * r.cos(),
+                new_x * r.cos() + new_y * r.sin(),
+            ),
+            Variation::Horseshoe => (
+                (new_x - new_y) / r,
+                (new_x + new_y) / r,
+            ),
+            Variation::Popcorn => (
+                new_x + self.c * (3.0 * new_y).tan().sin(),
+                new_y + self.f * (3.0 * new_x).tan().sin(),
+            ),
+        }
     }
 }
 
@@ -53,12 +85,11 @@ fn plot_points(points: Vec<(f64, f64)>, width: u32, height: u32) -> Result<(), B
     let root = BitMapBackend::new("fractal_flames.png", (width, height)).into_drawing_area();
     root.fill(&BLACK)?;
 
-    
     let min_x = points.iter().map(|&(x, _)| x).fold(f64::INFINITY, f64::min);
     let max_x = points.iter().map(|&(x, _)| x).fold(f64::NEG_INFINITY, f64::max);
     let min_y = points.iter().map(|&(_, y)| y).fold(f64::INFINITY, f64::min);
     let max_y = points.iter().map(|&(_, y)| y).fold(f64::NEG_INFINITY, f64::max);
-    
+
     let mut chart = ChartBuilder::on(&root)
         .build_cartesian_2d(min_x-0.5..max_x+0.5, min_y-0.5..max_y+0.5)?;
 
@@ -88,6 +119,7 @@ fn main() {
         e: 0.500,
         f: -0.500,
         weight: 0.370,
+        variation: Variation::Linear,
     };
 
     let transform2 = AffineTransform {
@@ -98,6 +130,7 @@ fn main() {
         e: 0.100,
         f: -0.900,
         weight: 0.570,
+        variation: Variation::Linear,
     };
 
     let transform3 = AffineTransform {
@@ -108,6 +141,7 @@ fn main() {
         e: 0.000,
         f: -0.100,
         weight: 0.022,
+        variation: Variation::Linear,
     };
 
     let transform4 = AffineTransform {
@@ -118,6 +152,7 @@ fn main() {
         e: -0.600,
         f: 0.900,
         weight: 0.058,
+        variation: Variation::Linear,
     };
 
     let ifs = IFS {
