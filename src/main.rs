@@ -13,6 +13,24 @@ enum Variation {
     Popcorn,
 }
 
+struct PostTransform {
+    a: f64,
+    b: f64,
+    c: f64,
+    d: f64,
+    e: f64,
+    f: f64,
+}
+
+impl PostTransform {
+    fn apply(&self, x: f64, y: f64) -> (f64, f64) {
+        (
+            self.a * x + self.b * y + self.c,
+            self.d * x + self.e * y + self.f,
+        )
+    }
+}
+
 struct AffineTransform {
     a: f64,
     b: f64,
@@ -22,32 +40,39 @@ struct AffineTransform {
     f: f64,
     weight: f64,
     variation: Variation,
+    post_transform: Option<PostTransform>,
 }
 
 impl AffineTransform {
     fn apply(&self, x: f64, y: f64) -> (f64, f64) {
-        let (new_x, new_y) = (
+        let (x, y) = (
             self.a * x + self.b * y + self.c,
             self.d * x + self.e * y + self.f,
         );
-        let r = (new_x * new_x + new_y * new_y).sqrt();
+        let r = (x * x + y * y).sqrt();
 
-        match self.variation {
-            Variation::Linear => (new_x, new_y),
-            Variation::Sinusoidal => (new_x.sin(), new_y.sin()),
-            Variation::Spherical => (new_x / (r * r), new_y / (r * r)),
+        let (x, y) = match self.variation {
+            Variation::Linear => (x, y),
+            Variation::Sinusoidal => (x.sin(), y.sin()),
+            Variation::Spherical => (x / (r * r), y / (r * r)),
             Variation::Swirl => (
-                new_x * r.sin() - new_y * r.cos(),
-                new_x * r.cos() + new_y * r.sin(),
+                x * r.sin() - y * r.cos(),
+                x * r.cos() + y * r.sin(),
             ),
             Variation::Horseshoe => (
-                (new_x - new_y) / r,
-                (new_x + new_y) / r,
+                (x - y) / r,
+                (x + y) / r,
             ),
             Variation::Popcorn => (
-                new_x + self.c * (3.0 * new_y).tan().sin(),
-                new_y + self.f * (3.0 * new_x).tan().sin(),
+                x + self.c * (3.0 * y).tan().sin(),
+                y + self.f * (3.0 * x).tan().sin(),
             ),
+        };
+
+        if let Some(ref post_transform) = self.post_transform {
+            post_transform.apply(x, y)
+        } else {
+            (x, y)
         }
     }
 }
@@ -68,9 +93,7 @@ impl IFS {
 
         for i in 0..iterations {
             let transform = &self.transforms[dist.sample(&mut rng)];
-            let (new_x, new_y) = transform.apply(x, y);
-            x = new_x;
-            y = new_y;
+            (x, y) = transform.apply(x, y);
 
             if i >= 20 {
                 points.push((x, y));
@@ -120,6 +143,7 @@ fn main() {
         f: -0.500,
         weight: 0.370,
         variation: Variation::Linear,
+        post_transform: None,
     };
 
     let transform2 = AffineTransform {
@@ -131,6 +155,7 @@ fn main() {
         f: -0.900,
         weight: 0.570,
         variation: Variation::Linear,
+        post_transform: None,
     };
 
     let transform3 = AffineTransform {
@@ -142,6 +167,7 @@ fn main() {
         f: -0.100,
         weight: 0.022,
         variation: Variation::Linear,
+        post_transform: None,
     };
 
     let transform4 = AffineTransform {
@@ -153,6 +179,7 @@ fn main() {
         f: 0.900,
         weight: 0.058,
         variation: Variation::Linear,
+        post_transform: None,
     };
 
     let ifs = IFS {
