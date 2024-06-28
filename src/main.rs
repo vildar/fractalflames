@@ -40,7 +40,6 @@ struct AffineTransform {
     f: f64,
     weight: f64,
     variation: Variation,
-    post_transform: Option<PostTransform>,
 }
 
 impl AffineTransform {
@@ -68,12 +67,7 @@ impl AffineTransform {
                 y + self.f * (3.0 * x).tan().sin(),
             ),
         };
-
-        if let Some(ref post_transform) = self.post_transform {
-            post_transform.apply(x, y)
-        } else {
-            (x, y)
-        }
+        (x, y)
     }
 }
 
@@ -99,22 +93,27 @@ impl IFS {
                 points.push((x, y));
             }
         }
-
         points
+    }
+
+    fn update_coord(&self, points: Vec<(f64, f64)>, post_transform: &PostTransform) -> Vec<(f64, f64)> {
+        points.into_iter()
+            .map(|(x, y)| post_transform.apply(x, y))
+            .collect()
     }
 }
 
 fn plot_points(points: Vec<(f64, f64)>, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>> {
-    let root = BitMapBackend::new("fractal_flames.png", (width, height)).into_drawing_area();
+    let root = BitMapBackend::new("fractal_flames2.png", (width, height)).into_drawing_area();
     root.fill(&BLACK)?;
 
-    let min_x = points.iter().map(|&(x, _)| x).fold(f64::INFINITY, f64::min);
-    let max_x = points.iter().map(|&(x, _)| x).fold(f64::NEG_INFINITY, f64::max);
-    let min_y = points.iter().map(|&(_, y)| y).fold(f64::INFINITY, f64::min);
-    let max_y = points.iter().map(|&(_, y)| y).fold(f64::NEG_INFINITY, f64::max);
+    //let min_x = points.iter().map(|(x, _)| *x).fold(f64::INFINITY, f64::min);
+    let max_x = points.iter().map(|(x, _)| *x).fold(f64::NEG_INFINITY, f64::max);
+    //let min_y = points.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
+    let max_y = points.iter().map(|(_, y)| *y).fold(f64::NEG_INFINITY, f64::max);
 
     let mut chart = ChartBuilder::on(&root)
-        .build_cartesian_2d(min_x-0.5..max_x+0.5, min_y-0.5..max_y+0.5)?;
+        .build_cartesian_2d(0.0..max_x, 0.0..max_y)?;
 
     chart.configure_mesh().disable_mesh().draw()?;
 
@@ -143,7 +142,6 @@ fn main() {
         f: -0.500,
         weight: 0.370,
         variation: Variation::Linear,
-        post_transform: None,
     };
 
     let transform2 = AffineTransform {
@@ -155,7 +153,6 @@ fn main() {
         f: -0.900,
         weight: 0.570,
         variation: Variation::Linear,
-        post_transform: None,
     };
 
     let transform3 = AffineTransform {
@@ -167,7 +164,6 @@ fn main() {
         f: -0.100,
         weight: 0.022,
         variation: Variation::Linear,
-        post_transform: None,
     };
 
     let transform4 = AffineTransform {
@@ -179,7 +175,6 @@ fn main() {
         f: 0.900,
         weight: 0.058,
         variation: Variation::Linear,
-        post_transform: None,
     };
 
     let ifs = IFS {
@@ -187,6 +182,20 @@ fn main() {
     };
 
     let points = ifs.chaos_game(1<<22);
+    let min_x = points.iter().map(|&(x, _)| x).fold(f64::INFINITY, f64::min);
+    let min_y = points.iter().map(|&(_, y)| y).fold(f64::INFINITY, f64::min);
+
+    let post_transform = PostTransform {
+        a: 1.0,
+        b: 0.0,
+        c: min_x.abs(),
+        d: 0.0,
+        e: 1.0,
+        f: min_y.abs(),
+    };
+
+    let points = ifs.update_coord(points, &post_transform);
+
     let width = 800;
     let height = 600;
     if let Err(e) = plot_points(points, width, height) {
