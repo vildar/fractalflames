@@ -101,31 +101,30 @@ impl IFS {
             .map(|(x, y)| post_transform.apply(x, y))
             .collect()
     }
+
+    fn transform_to_pixels(&self, points: Vec<(f64, f64)>, width: u32, height: u32) -> Vec<(i32, i32)> {
+        let min_x = points.iter().map(|(x, _)| *x).fold(f64::INFINITY, f64::min);
+        let max_x = points.iter().map(|(x, _)| *x).fold(f64::NEG_INFINITY, f64::max);
+        let min_y = points.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
+        let max_y = points.iter().map(|(_, y)| *y).fold(f64::NEG_INFINITY, f64::max);
+
+        points.into_iter().map(|(x, y)| {
+            let pixel_x = ((x - min_x) / (max_x - min_x) * (width as f64)).round() as i32;
+            let pixel_y = ((y - min_y) / (max_y - min_y) * (height as f64)).round() as i32;
+            (pixel_x, height as i32 - pixel_y) // Inverting y-axis for typical graphical representation
+        }).collect()
+    }
 }
 
 fn plot_points(points: Vec<(f64, f64)>, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>> {
     let root = BitMapBackend::new("fractal_flames2.png", (width, height)).into_drawing_area();
     root.fill(&BLACK)?;
 
-    //let min_x = points.iter().map(|(x, _)| *x).fold(f64::INFINITY, f64::min);
-    let max_x = points.iter().map(|(x, _)| *x).fold(f64::NEG_INFINITY, f64::max);
-    //let min_y = points.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
-    let max_y = points.iter().map(|(_, y)| *y).fold(f64::NEG_INFINITY, f64::max);
+    let ifs = IFS { transforms: vec![] }; // Temporary IFS instance to use transform_to_pixels
+    let pixel_points = ifs.transform_to_pixels(points, width, height);
 
-    let mut chart = ChartBuilder::on(&root)
-        .build_cartesian_2d(0.0..max_x, 0.0..max_y)?;
-
-    chart.configure_mesh().disable_mesh().draw()?;
-
-    for &(x, y) in &points {
-        chart.draw_series(PointSeries::of_element(
-            [(x, y)],
-            1,
-            &WHITE,
-            &|c, s, st| {
-                return EmptyElement::at(c) + Circle::new((0, 0), s, st.filled());
-            },
-        ))?;
+    for &(x, y) in &pixel_points {
+        root.draw_pixel((x, y), &WHITE)?;
     }
 
     root.present()?;
@@ -181,7 +180,7 @@ fn main() {
         transforms: vec![transform1, transform2, transform3, transform4],
     };
 
-    let points = ifs.chaos_game(1<<22);
+    let points = ifs.chaos_game(1 << 22);
     let min_x = points.iter().map(|&(x, _)| x).fold(f64::INFINITY, f64::min);
     let min_y = points.iter().map(|&(_, y)| y).fold(f64::INFINITY, f64::min);
 
