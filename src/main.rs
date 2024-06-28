@@ -3,6 +3,7 @@
 use plotters::prelude::*;
 use rand::Rng;
 use rand::distributions::{Distribution, WeightedIndex};
+use std::collections::HashMap;
 
 enum Variation {
     Linear,
@@ -114,17 +115,27 @@ impl IFS {
             (pixel_x, height as i32 - pixel_y) // Inverting y-axis for typical graphical representation
         }).collect()
     }
+
+    fn create_histogram(&self, pixel_points: &[(i32, i32)]) -> HashMap<(i32, i32), u32> {
+        let mut histogram = HashMap::new();
+        for &(x, y) in pixel_points {
+            *histogram.entry((x, y)).or_insert(0) += 1;
+        }
+        histogram
+    }
 }
 
-fn plot_points(points: Vec<(f64, f64)>, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>> {
-    let root = BitMapBackend::new("fractal_flames2.png", (width, height)).into_drawing_area();
+fn plot_points(histogram: HashMap<(i32, i32), u32>, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let root = BitMapBackend::new("fractal_flames_density.png", (width, height)).into_drawing_area();
     root.fill(&BLACK)?;
 
-    let ifs = IFS { transforms: vec![] }; // Temporary IFS instance to use transform_to_pixels
-    let pixel_points = ifs.transform_to_pixels(points, width, height);
+    let max_hits = *histogram.values().max().unwrap_or(&1) as f64;
 
-    for &(x, y) in &pixel_points {
-        root.draw_pixel((x, y), &WHITE)?;
+    for (&(x, y), &count) in &histogram {
+        let intensity = (count as f64).ln_1p() / (max_hits.ln_1p());
+        let shade = (intensity * 255.0).round() as u8;
+        let color = RGBColor(shade, shade, shade);
+        root.draw_pixel((x, y), &color)?;
     }
 
     root.present()?;
@@ -197,7 +208,12 @@ fn main() {
 
     let width = 800;
     let height = 600;
-    if let Err(e) = plot_points(points, width, height) {
+    let pixel_points = ifs.transform_to_pixels(points, width, height);
+
+    let histogram = ifs.create_histogram(&pixel_points);
+    println!("{:?}", histogram);
+
+    if let Err(e) = plot_points(histogram, width, height) {
         eprintln!("Error plotting points: {}", e);
     }
 }
