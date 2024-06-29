@@ -77,7 +77,7 @@ struct IFS {
 }
 
 impl IFS {
-    fn chaos_game(&self, iterations: u32) -> Vec<(f64, f64)> {
+    fn chaos_game(&self, iterations: u32) -> Vec<((f64, f64), usize)> {
         let mut rng = rand::thread_rng();
         let mut x = rng.gen_range(-1.0..1.0);
         let mut y = rng.gen_range(-1.0..1.0);
@@ -87,38 +87,39 @@ impl IFS {
         let dist = WeightedIndex::new(&weights).unwrap();
 
         for i in 0..iterations {
-            let transform = &self.transforms[dist.sample(&mut rng)];
+            let transform_index = dist.sample(&mut rng);
+            let transform = &self.transforms[transform_index];
             (x, y) = transform.apply(x, y);
 
             if i >= 20 {
-                points.push((x, y));
+                points.push(((x, y), transform_index));
             }
         }
         points
     }
 
-    fn update_coord(&self, points: Vec<(f64, f64)>, post_transform: &PostTransform) -> Vec<(f64, f64)> {
+    fn update_coord(&self, points: Vec<((f64, f64), usize)>, post_transform: &PostTransform) -> Vec<((f64, f64), usize)> {
         points.into_iter()
-            .map(|(x, y)| post_transform.apply(x, y))
+            .map(|((x, y), index)| (post_transform.apply(x, y), index))
             .collect()
     }
 
-    fn transform_to_pixels(&self, points: Vec<(f64, f64)>, width: u32, height: u32) -> Vec<(i32, i32)> {
-        let min_x = points.iter().map(|(x, _)| *x).fold(f64::INFINITY, f64::min);
-        let max_x = points.iter().map(|(x, _)| *x).fold(f64::NEG_INFINITY, f64::max);
-        let min_y = points.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
-        let max_y = points.iter().map(|(_, y)| *y).fold(f64::NEG_INFINITY, f64::max);
+    fn transform_to_pixels(&self, points: Vec<((f64, f64), usize)>, width: u32, height: u32) -> Vec<((i32, i32), usize)> {
+        let min_x = points.iter().map(|((x, _), _)| *x).fold(f64::INFINITY, f64::min);
+        let max_x = points.iter().map(|((x, _), _)| *x).fold(f64::NEG_INFINITY, f64::max);
+        let min_y = points.iter().map(|((_, y), _)| *y).fold(f64::INFINITY, f64::min);
+        let max_y = points.iter().map(|((_, y), _)| *y).fold(f64::NEG_INFINITY, f64::max);
 
-        points.into_iter().map(|(x, y)| {
+        points.into_iter().map(|((x, y), index)| {
             let pixel_x = ((x - min_x) / (max_x - min_x) * (width as f64)).round() as i32;
             let pixel_y = ((y - min_y) / (max_y - min_y) * (height as f64)).round() as i32;
-            (pixel_x, height as i32 - pixel_y) // Inverting y-axis for typical graphical representation
+            ((pixel_x, height as i32 - pixel_y), index) // Inverting y-axis for typical graphical representation
         }).collect()
     }
 
-    fn create_histogram(&self, pixel_points: &[(i32, i32)]) -> HashMap<(i32, i32), u32> {
+    fn create_histogram(&self, pixel_points: &[((i32, i32), usize)]) -> HashMap<(i32, i32), u32> {
         let mut histogram = HashMap::new();
-        for &(x, y) in pixel_points {
+        for &((x, y), _) in pixel_points {
             *histogram.entry((x, y)).or_insert(0) += 1;
         }
         histogram
@@ -192,8 +193,8 @@ fn main() {
     };
 
     let points = ifs.chaos_game(1 << 25);
-    let min_x = points.iter().map(|&(x, _)| x).fold(f64::INFINITY, f64::min);
-    let min_y = points.iter().map(|&(_, y)| y).fold(f64::INFINITY, f64::min);
+    let min_x = points.iter().map(|((x, _), _)| *x).fold(f64::INFINITY, f64::min);
+    let min_y = points.iter().map(|((_, y), _)| *y).fold(f64::INFINITY, f64::min);
 
     let post_transform = PostTransform {
         a: 1.0,
