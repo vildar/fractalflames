@@ -191,7 +191,7 @@ fn main() {
         transforms: vec![transform1, transform2, transform3, transform4],
     };
 
-    let points = ifs.chaos_game(1 << 22);
+    let points = ifs.chaos_game(1 << 25);
     let min_x = points.iter().map(|&(x, _)| x).fold(f64::INFINITY, f64::min);
     let min_y = points.iter().map(|&(_, y)| y).fold(f64::INFINITY, f64::min);
 
@@ -211,7 +211,6 @@ fn main() {
     let pixel_points = ifs.transform_to_pixels(points, width, height);
 
     let histogram = ifs.create_histogram(&pixel_points);
-    println!("{:?}", histogram);
 
     if let Err(e) = plot_points(histogram, width, height) {
         eprintln!("Error plotting points: {}", e);
