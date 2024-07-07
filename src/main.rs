@@ -5,6 +5,22 @@ use rand::Rng;
 use rand::distributions::{Distribution, WeightedIndex};
 use std::collections::HashMap;
 
+fn color_map(value: f64) -> (f64, f64, f64) {
+    // Ensure the value is clamped between 0 and 1
+    let value = value.clamp(0.0, 1.0);
+
+    // Define the colors at the start and end of the range
+    let start_color = (0.0, 0.0, 1.0); // Blue
+    let end_color = (1.0, 0.0, 0.0);   // Red
+
+    // Interpolate between the start and end colors
+    let r = start_color.0 + value * (end_color.0 - start_color.0);
+    let g = start_color.1 + value * (end_color.1 - start_color.1);
+    let b = start_color.2 + value * (end_color.2 - start_color.2);
+
+    (r, g, b)
+}
+
 enum Variation {
     Linear,
     Sinusoidal,
@@ -41,6 +57,7 @@ struct AffineTransform {
     f: f64,
     weight: f64,
     variation: Variation,
+    color: (f64, f64, f64),
 }
 
 impl AffineTransform {
@@ -117,30 +134,50 @@ impl IFS {
         }).collect()
     }
 
-    fn create_histogram(&self, pixel_points: &[((i32, i32), usize)]) -> HashMap<(i32, i32), u32> {
+    fn create_histogram(&self, pixel_points: &[((i32, i32), usize)]) -> HashMap<(i32, i32), ((f64, f64, f64), u32)> {
+        let mut rng = rand::thread_rng();
         let mut histogram = HashMap::new();
-        for &((x, y), _) in pixel_points {
-            *histogram.entry((x, y)).or_insert(0) += 1;
+        let c = color_map(rng.gen_range(0.0..1.0));
+
+        for &((x, y), index) in pixel_points {
+            let transform_color = self.transforms[index].color;
+            let entry = histogram.entry((x, y)).or_insert((transform_color, 0));
+            entry.1 += 1; // Increment alpha value
+
+            if entry.1 > 1 {
+                entry.0.0 = (entry.0.0 + transform_color.0) / 2.0;
+                entry.0.1 = (entry.0.1 + transform_color.1) / 2.0;
+                entry.0.2 = (entry.0.2 + transform_color.2) / 2.0;
+            } else {
+                entry.0.0 = (c.0 + transform_color.0) / 2.0;
+                entry.0.1 = (c.1 + transform_color.1) / 2.0;
+                entry.0.2 = (c.2 + transform_color.2) / 2.0;
+            }
         }
         histogram
     }
 }
 
-fn plot_points(histogram: HashMap<(i32, i32), u32>, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>> {
-    let root = BitMapBackend::new("fractal_flames_density.png", (width, height)).into_drawing_area();
-    root.fill(&BLACK)?;
+fn plot_points(histogram: HashMap<(i32, i32), ((f64, f64, f64), u32)>, width: u32, height: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let root = BitMapBackend::new("fractal_flames_colored_white.png", (width, height)).into_drawing_area();
+    root.fill(&WHITE)?;
 
-    let max_hits = *histogram.values().max().unwrap_or(&1) as f64;
+    let max_alpha = histogram.values().map(|&(_, alpha)| alpha).max().unwrap_or(1) as f64;
 
-    for (&(x, y), &count) in &histogram {
-        let intensity = (count as f64).ln_1p() / (max_hits.ln_1p());
-        let shade = (intensity * 255.0).round() as u8;
-        let color = RGBColor(shade, shade, shade);
-        root.draw_pixel((x, y), &color)?;
+    for (&(x, y), &((r, g, b), alpha)) in &histogram {
+        let intensity = (alpha as f64).ln_1p() / (max_alpha.ln_1p());
+        let color = RGBColor((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8);
+        root.draw_pixel((x, y), &color.mix(intensity))?;
     }
 
     root.present()?;
     Ok(())
+}
+
+fn print_histogram(histogram: &HashMap<(i32, i32), ((f64, f64, f64), u32)>) {
+    for ((x, y), ((r, g, b), alpha)) in histogram {
+        println!("Pixel ({}, {}): Color ({:.2}, {:.2}, {:.2}), Alpha: {}", x, y, r, g, b, alpha);
+    }
 }
 
 fn main() {
@@ -153,6 +190,7 @@ fn main() {
         f: -0.500,
         weight: 0.370,
         variation: Variation::Linear,
+        color: color_map(0.1),
     };
 
     let transform2 = AffineTransform {
@@ -164,6 +202,7 @@ fn main() {
         f: -0.900,
         weight: 0.570,
         variation: Variation::Linear,
+        color: color_map(0.3),
     };
 
     let transform3 = AffineTransform {
@@ -175,6 +214,7 @@ fn main() {
         f: -0.100,
         weight: 0.022,
         variation: Variation::Linear,
+        color: color_map(0.5),
     };
 
     let transform4 = AffineTransform {
@@ -186,13 +226,14 @@ fn main() {
         f: 0.900,
         weight: 0.058,
         variation: Variation::Linear,
+        color: color_map(0.7),
     };
 
     let ifs = IFS {
         transforms: vec![transform1, transform2, transform3, transform4],
     };
 
-    let points = ifs.chaos_game(1 << 25);
+    let points = ifs.chaos_game(1 << 27);
     let min_x = points.iter().map(|((x, _), _)| *x).fold(f64::INFINITY, f64::min);
     let min_y = points.iter().map(|((_, y), _)| *y).fold(f64::INFINITY, f64::min);
 
@@ -207,11 +248,12 @@ fn main() {
 
     let points = ifs.update_coord(points, &post_transform);
 
-    let width = 800;
-    let height = 600;
+    let width = 1600;
+    let height = 1200;
     let pixel_points = ifs.transform_to_pixels(points, width, height);
 
     let histogram = ifs.create_histogram(&pixel_points);
+    //print_histogram(&histogram);
 
     if let Err(e) = plot_points(histogram, width, height) {
         eprintln!("Error plotting points: {}", e);
