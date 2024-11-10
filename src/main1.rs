@@ -1,9 +1,19 @@
 #![allow(dead_code)]
 
+use bincode;
+use mpi::traits::*;
 use plotters::prelude::*;
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::Rng;
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+#[derive(Serialize, Deserialize)]
+struct HistogramEntry {
+    key: (i32, i32),
+    value: ((f64, f64, f64), u32),
+}
 
 fn color_map(value: f64) -> (f64, f64, f64) {
     // Ensure the value is clamped between 0 and 1
@@ -88,7 +98,7 @@ struct IFS {
 }
 
 impl IFS {
-    fn chaos_game(&self, iterations: u32) -> Vec<((f64, f64), usize)> {
+    fn chaos_game(&self, iterations: u32, rank: usize, size: usize) -> Vec<((f64, f64), usize)> {
         let mut rng = rand::thread_rng();
         let mut x = rng.gen_range(-1.0..1.0);
         let mut y = rng.gen_range(-1.0..1.0);
@@ -97,7 +107,11 @@ impl IFS {
         let weights: Vec<f64> = self.transforms.iter().map(|t| t.weight).collect();
         let dist = WeightedIndex::new(&weights).unwrap();
 
-        for i in 0..iterations {
+        // Each process will handle its portion of iterations
+        let local_iterations = iterations / size as u32;
+        let start_iteration = rank as u32 * local_iterations;
+
+        for i in start_iteration..(start_iteration + local_iterations) {
             let transform_index = dist.sample(&mut rng);
             let transform = &self.transforms[transform_index];
             (x, y) = transform.apply(x, y);
@@ -115,7 +129,7 @@ impl IFS {
         post_transform: &PostTransform,
     ) -> Vec<((f64, f64), usize)> {
         points
-            .into_iter()
+            .into_par_iter() // Parallelize with Rayon
             .map(|((x, y), index)| (post_transform.apply(x, y), index))
             .collect()
     }
@@ -144,11 +158,11 @@ impl IFS {
             .fold(f64::NEG_INFINITY, f64::max);
 
         points
-            .into_iter()
+            .into_par_iter() // Parallelize with Rayon
             .map(|((x, y), index)| {
                 let pixel_x = ((x - min_x) / (max_x - min_x) * (width as f64)).round() as i32;
                 let pixel_y = ((y - min_y) / (max_y - min_y) * (height as f64)).round() as i32;
-                ((pixel_x, height as i32 - pixel_y), index) // Inverting y-axis for typical graphical representation
+                ((pixel_x, height as i32 - pixel_y), index)
             })
             .collect()
     }
@@ -157,26 +171,37 @@ impl IFS {
         &self,
         pixel_points: &[((i32, i32), usize)],
     ) -> HashMap<(i32, i32), ((f64, f64, f64), u32)> {
-        let mut rng = rand::thread_rng();
-        let mut histogram = HashMap::new();
-        let c = color_map(rng.gen_range(0.0..1.0));
+        pixel_points
+            .par_iter()
+            .fold(HashMap::new, |mut local_histogram, &((x, y), index)| {
+                let transform_color = self.transforms[index].color;
+                let entry = local_histogram
+                    .entry((x, y))
+                    .or_insert((transform_color, 0));
+                entry.1 += 1;
 
-        for &((x, y), index) in pixel_points {
-            let transform_color = self.transforms[index].color;
-            let entry = histogram.entry((x, y)).or_insert((transform_color, 0));
-            entry.1 += 1; // Increment alpha value
+                if entry.1 > 1 {
+                    entry.0 .0 = (entry.0 .0 + transform_color.0) / 2.0;
+                    entry.0 .1 = (entry.0 .1 + transform_color.1) / 2.0;
+                    entry.0 .2 = (entry.0 .2 + transform_color.2) / 2.0;
+                }
 
-            if entry.1 > 1 {
-                entry.0 .0 = (entry.0 .0 + transform_color.0) / 2.0;
-                entry.0 .1 = (entry.0 .1 + transform_color.1) / 2.0;
-                entry.0 .2 = (entry.0 .2 + transform_color.2) / 2.0;
-            } else {
-                entry.0 .0 = (c.0 + transform_color.0) / 2.0;
-                entry.0 .1 = (c.1 + transform_color.1) / 2.0;
-                entry.0 .2 = (c.2 + transform_color.2) / 2.0;
-            }
-        }
-        histogram
+                local_histogram
+            })
+            .reduce(
+                || HashMap::new(),
+                |mut acc, local_histogram| {
+                    for (key, (color, alpha)) in local_histogram {
+                        let entry = acc.entry(key).or_insert((color, 0));
+                        entry.1 += alpha;
+
+                        entry.0 .0 = (entry.0 .0 + color.0) / 2.0;
+                        entry.0 .1 = (entry.0 .1 + color.1) / 2.0;
+                        entry.0 .2 = (entry.0 .2 + color.2) / 2.0;
+                    }
+                    acc
+                },
+            )
     }
 }
 
@@ -215,6 +240,11 @@ fn print_histogram(histogram: &HashMap<(i32, i32), ((f64, f64, f64), u32)>) {
 }
 
 fn main() {
+    let universe = mpi::initialize().unwrap();
+    let world = universe.world();
+    let rank = world.rank();
+    let size = world.size();
+
     let transform1 = AffineTransform {
         a: -0.870,
         b: -0.100,
@@ -267,7 +297,7 @@ fn main() {
         transforms: vec![transform1, transform2, transform3, transform4],
     };
 
-    let points = ifs.chaos_game(1 << 27);
+    let points = ifs.chaos_game(1 << 27, rank as usize, size as usize);
     let min_x = points
         .iter()
         .map(|((x, _), _)| *x)
@@ -292,10 +322,75 @@ fn main() {
     let height = 1200;
     let pixel_points = ifs.transform_to_pixels(points, width, height);
 
-    let histogram = ifs.create_histogram(&pixel_points);
-    //print_histogram(&histogram);
+    let local_histogram = ifs.create_histogram(&pixel_points);
 
-    if let Err(e) = plot_points(histogram, width, height) {
-        eprintln!("Error plotting points: {}", e);
+    // Serialize `local_histogram` to a Vec<u8>
+    let local_histogram_data: Vec<HistogramEntry> = local_histogram
+        .into_iter()
+        .map(|(key, value)| HistogramEntry { key, value })
+        .collect();
+    let serialized_local_histogram = bincode::serialize(&local_histogram_data).unwrap();
+
+    let local_size = serialized_local_histogram.len();
+    println!(
+        "Process {} local serialized histogram size: {}",
+        rank, local_size
+    );
+
+    let mut sizes = vec![0usize; size as usize];
+    world.all_gather_into(&local_size, &mut sizes[..]);
+
+    if rank == 0 {
+        println!("All sizes gathered: {:?}", sizes);
+    }
+
+    // Calculate total size
+    let total_size: usize = sizes.iter().sum();
+    // Gather all serialized data from processes
+    // let mut serialized_global_histogram =
+    //     vec![0u8; serialized_local_histogram.len() * size as usize];
+    let mut serialized_global_histogram = vec![0u8; total_size];
+    println!(
+        "Process {} local serialized histogram size: {}",
+        rank, local_size
+    );
+    println!("Total size to gather: {}", total_size);
+
+    world.all_gather_into(
+        &serialized_local_histogram[..],
+        &mut serialized_global_histogram[..],
+    );
+
+    // world.all_gather_into(
+    //     &serialized_local_histogram[..],
+    //     &mut serialized_global_histogram[..],
+    // );
+
+    // Deserialize received data into `global_histogram`
+    // let mut global_histogram = HashMap::new();
+    // for chunk in serialized_global_histogram.chunks(serialized_local_histogram.len()) {
+    //     let histogram_entries: Vec<HistogramEntry> = bincode::deserialize(chunk).unwrap();
+    //     for entry in histogram_entries {
+    //         global_histogram.entry(entry.key).or_insert(entry.value);
+    //     }
+    // }
+    let mut global_histogram = HashMap::new();
+    let mut offset = 0;
+
+    for &size in &sizes {
+        let chunk = &serialized_global_histogram[offset..offset + size];
+        let histogram_entries: Vec<HistogramEntry> = bincode::deserialize(chunk).unwrap();
+        for entry in histogram_entries {
+            global_histogram.entry(entry.key).or_insert(entry.value);
+        }
+        offset += size;
+    }
+    if rank == 0 {
+        println!("Sizes array: {:?}", sizes);
+    }
+    if rank == 0 {
+        if let Err(e) = plot_points(global_histogram, width, height) {
+            eprintln!("Error plotting points: {}", e);
+        }
     }
 }
