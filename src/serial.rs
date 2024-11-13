@@ -3,9 +3,7 @@
 use plotters::prelude::*;
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::Rng;
-use rayon::prelude::*;
 use std::collections::HashMap;
-use std::sync::Mutex;
 
 fn color_map(value: f64) -> (f64, f64, f64) {
     // Ensure the value is clamped between 0 and 1
@@ -117,7 +115,7 @@ impl IFS {
         post_transform: &PostTransform,
     ) -> Vec<((f64, f64), usize)> {
         points
-            .into_par_iter()
+            .into_iter()
             .map(|((x, y), index)| (post_transform.apply(x, y), index))
             .collect()
     }
@@ -146,7 +144,7 @@ impl IFS {
             .fold(f64::NEG_INFINITY, f64::max);
 
         points
-            .into_par_iter()
+            .into_iter()
             .map(|((x, y), index)| {
                 let pixel_x = ((x - min_x) / (max_x - min_x) * (width as f64)).round() as i32;
                 let pixel_y = ((y - min_y) / (max_y - min_y) * (height as f64)).round() as i32;
@@ -160,14 +158,11 @@ impl IFS {
         pixel_points: &[((i32, i32), usize)],
     ) -> HashMap<(i32, i32), ((f64, f64, f64), u32)> {
         let mut rng = rand::thread_rng();
+        let mut histogram = HashMap::new();
         let c = color_map(rng.gen_range(0.0..1.0));
 
-        // Wrap the histogram in a Mutex to allow safe mutation in parallel
-        let histogram = Mutex::new(HashMap::new());
-
-        pixel_points.into_par_iter().for_each(|&((x, y), index)| {
+        for &((x, y), index) in pixel_points {
             let transform_color = self.transforms[index].color;
-            let mut histogram = histogram.lock().unwrap(); // Lock the Mutex for mutable access
             let entry = histogram.entry((x, y)).or_insert((transform_color, 0));
             entry.1 += 1; // Increment alpha value
 
@@ -180,9 +175,8 @@ impl IFS {
                 entry.0 .1 = (c.1 + transform_color.1) / 2.0;
                 entry.0 .2 = (c.2 + transform_color.2) / 2.0;
             }
-        });
-
-        histogram.into_inner().unwrap()
+        }
+        histogram
     }
 }
 
