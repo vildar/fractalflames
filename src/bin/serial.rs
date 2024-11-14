@@ -4,6 +4,7 @@ use plotters::prelude::*;
 use rand::distributions::{Distribution, WeightedIndex};
 use rand::Rng;
 use std::collections::HashMap;
+use std::f64::consts::PI;
 
 fn color_map(value: f64) -> (f64, f64, f64) {
     // Ensure the value is clamped between 0 and 1
@@ -28,6 +29,8 @@ enum Variation {
     Swirl,
     Horseshoe,
     Popcorn,
+    Exponential(f64),
+    Cosine(f64),
 }
 
 struct PostTransform {
@@ -56,29 +59,56 @@ struct AffineTransform {
     e: f64,
     f: f64,
     weight: f64,
-    variation: Variation,
+    variations: Vec<Variation>,
     color: (f64, f64, f64),
 }
 
 impl AffineTransform {
-    fn apply(&self, x: f64, y: f64) -> (f64, f64) {
-        let (x, y) = (
-            self.a * x + self.b * y + self.c,
-            self.d * x + self.e * y + self.f,
-        );
+    fn apply(&self, mut x: f64, mut y: f64) -> (f64, f64) {
+        x = self.a * x + self.b * y + self.c;
+        y = self.d * x + self.e * y + self.f;
+
         let r = (x * x + y * y).sqrt();
 
-        let (x, y) = match self.variation {
-            Variation::Linear => (x, y),
-            Variation::Sinusoidal => (x.sin(), y.sin()),
-            Variation::Spherical => (x / (r * r), y / (r * r)),
-            Variation::Swirl => (x * r.sin() - y * r.cos(), x * r.cos() + y * r.sin()),
-            Variation::Horseshoe => ((x - y) / r, (x + y) / r),
-            Variation::Popcorn => (
-                x + self.c * (3.0 * y).tan().sin(),
-                y + self.f * (3.0 * x).tan().sin(),
-            ),
-        };
+        for variation in &self.variations {
+            match variation {
+                Variation::Linear => {}
+                Variation::Sinusoidal => {
+                    x = x.sin();
+                    y = y.sin();
+                }
+                Variation::Spherical => {
+                    let r_squared = r * r;
+                    x = x / r_squared;
+                    y = y / r_squared;
+                }
+                Variation::Swirl => {
+                    let new_x = x * r.sin() - y * r.cos();
+                    let new_y = x * r.cos() + y * r.sin();
+                    x = new_x;
+                    y = new_y;
+                }
+                Variation::Horseshoe => {
+                    let new_x = (x - y) / r;
+                    let new_y = (x + y) / r;
+                    x = new_x;
+                    y = new_y;
+                }
+                Variation::Popcorn => {
+                    x += self.c * (3.0 * y).tan().sin();
+                    y += self.f * (3.0 * x).tan().sin();
+                }
+                Variation::Exponential(scale) => {
+                    x = x.exp() * scale * x.cos();
+                    y = y.exp() * scale * y.sin();
+                }
+                Variation::Cosine(cosine_scale) => {
+                    x = (PI * x).cos() * cosine_scale * x;
+                    y = (PI * y).cos() * cosine_scale * y;
+                }
+            };
+        }
+
         (x, y)
     }
 }
@@ -185,9 +215,8 @@ fn plot_points(
     width: u32,
     height: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let root =
-        BitMapBackend::new("fractal_flames_colored_white.png", (width, height)).into_drawing_area();
-    root.fill(&WHITE)?;
+    let root = BitMapBackend::new("qosmic_fractal.png", (width, height)).into_drawing_area();
+    root.fill(&BLACK)?;
 
     let max_alpha = histogram
         .values()
@@ -216,55 +245,96 @@ fn print_histogram(histogram: &HashMap<(i32, i32), ((f64, f64, f64), u32)>) {
 
 fn main() {
     let transform1 = AffineTransform {
-        a: -0.870,
-        b: -0.100,
-        c: -0.930,
-        d: -0.350,
-        e: 0.500,
-        f: -0.500,
-        weight: 0.370,
-        variation: Variation::Linear,
-        color: color_map(0.1),
+        a: -0.223797,
+        b: 0.807016,
+        c: 0.405636,
+        d: 0.0169888,
+        e: 0.609383,
+        f: 0.242596,
+        weight: 0.5,
+        variations: vec![
+            Variation::Exponential(0.223734),
+            Variation::Cosine(0.776266),
+        ],
+        color: (179.0, 201.0, 158.0),
     };
 
     let transform2 = AffineTransform {
-        a: 0.590,
-        b: -0.620,
-        c: -0.800,
-        d: -0.110,
-        e: 0.100,
-        f: -0.900,
-        weight: 0.570,
-        variation: Variation::Linear,
-        color: color_map(0.3),
+        a: -0.41212,
+        b: 0.506177,
+        c: 0.64082,
+        d: 0.197125,
+        e: 0.458698,
+        f: -0.850915,
+        weight: 0.5,
+        variations: vec![Variation::Linear],
+        color: (91.0, 149.0, 116.0),
     };
 
     let transform3 = AffineTransform {
-        a: -0.056,
-        b: 0.310,
-        c: 0.920,
-        d: 0.170,
-        e: 0.000,
-        f: -0.100,
-        weight: 0.022,
-        variation: Variation::Linear,
-        color: color_map(0.5),
+        a: -1.0,
+        b: 0.0,
+        c: 0.0,
+        d: 1.0,
+        e: 0.0,
+        f: 0.0,
+        weight: 1.0,
+        variations: vec![Variation::Linear],
+        color: (155.0, 200.0, 143.0),
     };
 
     let transform4 = AffineTransform {
-        a: 0.910,
-        b: -0.190,
-        c: 0.330,
-        d: 0.240,
-        e: -0.600,
-        f: 0.900,
-        weight: 0.058,
-        variation: Variation::Linear,
-        color: color_map(0.7),
+        a: -0.809017,
+        b: 0.587785,
+        c: -0.587785,
+        d: -0.809017,
+        e: 0.0,
+        f: 0.0,
+        weight: 1.0,
+        variations: vec![Variation::Linear],
+        color: (137.0, 189.0, 128.0),
+    };
+
+    let transform5 = AffineTransform {
+        a: -0.809017,
+        b: -0.587785,
+        c: 0.587785,
+        d: -0.809017,
+        e: 0.0,
+        f: 0.0,
+        weight: 1.0,
+        variations: vec![Variation::Linear],
+        color: (254.0, 191.0, 42.0),
+    };
+
+    let transform6 = AffineTransform {
+        a: 0.309017,
+        b: 0.951057,
+        c: -0.951057,
+        d: 0.309017,
+        e: 0.0,
+        f: 0.0,
+        weight: 1.0,
+        variations: vec![Variation::Linear],
+        color: (210.0, 110.0, 0.0),
+    };
+
+    let transform7 = AffineTransform {
+        a: 0.309017,
+        b: -0.951057,
+        c: 0.951057,
+        d: 0.309017,
+        e: 0.0,
+        f: 0.0,
+        weight: 1.0,
+        variations: vec![Variation::Linear],
+        color: (252.0, 202.0, 64.0),
     };
 
     let ifs = IFS {
-        transforms: vec![transform1, transform2, transform3, transform4],
+        transforms: vec![
+            transform1, transform2, transform3, transform4, transform5, transform6, transform7,
+        ],
     };
 
     let points = ifs.chaos_game(1 << 27);
